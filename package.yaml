@@ -1,0 +1,64 @@
+name:                sampler
+version:             0.1.0.0
+github:              "githubuser/sampler"
+license:             BSD3
+author:              "Author name here"
+maintainer:          "example@example.com"
+copyright:           "2019 Author name here"
+
+extra-source-files:
+- README.md
+- ChangeLog.md
+
+# Metadata used when publishing your package
+# synopsis:            Short description of your package
+# category:            Web
+
+# To avoid duplicated efforts in documentation and dealing with the
+# complications of embedding Haddock markup inside cabal files, it is
+# common to point users to the README.md file.
+description:         Please see the README on GitHub at <https://github.com/githubuser/sampler#readme>
+
+dependencies:
+- base >= 4.7 && < 5
+- MonadRandom
+- base >=4.7 && <5
+- containers
+- deepseq
+- lens
+- linear
+- splitmix
+- vector
+- transformers
+
+default-extensions:
+  - ViewPatterns
+  - TupleSections
+  - DeriveGeneric
+  - BlockArguments
+  - TypeFamilies
+  - FlexibleContexts
+  - BangPatterns
+  - RecordWildCards
+
+library:
+  source-dirs: src
+
+tests:
+  tester:
+    source-dirs: test
+    main: Spec.hs
+    dependencies:
+      - sampler
+      - QuickCheck
+      - tasty
+      - tasty-quickcheck
+      - tasty-discover
+      - approximate-equality
+      - type-level-natural-number
+      - aeson
+      - directory
+      - diagrams-lib
+      - diagrams-rasterific
+      - uuid
+      - palette
