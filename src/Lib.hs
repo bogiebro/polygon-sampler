@@ -1,4 +1,4 @@
-{-# LANGUAGE DeriveGeneric, DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric, DeriveAnyClass, ConstraintKinds #-}
 module Lib (polyInterior, polyExterior, getRegions, regionSample,
   RegionTy(..), Region(..), Seg(..), showPt, mconcatS
 ) where
@@ -25,53 +25,54 @@ import Control.Exception
 import Control.Monad.Trans.Maybe
 import Debug.Trace
 
-type Pt = V2 Float
-type Range = (Float,Float)
-type YMap s = Map RPt (STSeg s)
+type Realer a = (Show a, RealFrac a, Floating a, Random a, RealFloat a)
 
-data Seg = Seg {segStart :: !Pt, segEnd :: !Pt, segPolyOnBot :: !Bool, segSlope :: !Float} deriving (Generic, NFData)
-instance Show Seg where
+type Range a = (a, a)
+type YMap s a = Map (RPt a) (STSeg s a)
+
+data Seg a = Seg {segStart :: !(V2 a), segEnd :: !(V2 a), segPolyOnBot :: !Bool, segSlope :: !a} deriving (Generic, NFData)
+instance Realer a => Show (Seg a) where
   show (Seg a b c d) = showPt a ++ " ---> " ++ showPt b ++ " [slope=" ++ show d ++ " polyOnBot=" ++ show c ++ "]"
-showPt p = printf "(%.2f,%.2f)" (p ^._x) (p ^._y)
+showPt p = printf "(%.2f,%.2f)" (realToFrac (p ^._x) :: Float) (realToFrac (p ^._y) :: Float)
 
 -- Sampling from polygons is just weighted sampling from triangles and rectangles
 data RegionTy = Rect | TopTri | BotTri deriving (Eq, Show, Generic, NFData)
 
 -- Data for sampling within a given slice on the x axis. Probs are not normalized.
-data Region = Region {
-  regionXRange :: Range, regionYRange :: Range, regionProb :: Float,
-  regionDiagSlope :: Float, regionTy :: RegionTy} deriving (Show, Generic, NFData)
+data Region a = Region {
+  regionXRange :: Range a, regionYRange :: Range a, regionProb :: a,
+  regionDiagSlope :: a, regionTy :: RegionTy} deriving (Show, Generic, NFData)
 
 -- Indexes line segments along the y axis
-data RPt = RPt {rptY :: Float, rptSlope :: Float, rptPolyOnBot :: Bool} deriving (Eq, Ord, Show, Generic, NFData)
+data RPt a = RPt {rptY :: a, rptSlope :: a, rptPolyOnBot :: Bool} deriving (Eq, Ord, Show, Generic, NFData)
 
 -- | STSegs keep a reference to their y coordinate over time
-data STSeg s = STSeg {stsegVal :: !Seg, stsegRPt :: !(STRef s RPt), stsegX :: !(STRef s Float)}
-instance Show (STSeg s) where show (STSeg a _ _) = "ST " ++ show a
+data STSeg s a = STSeg {stsegVal :: !(Seg a), stsegRPt :: !(STRef s (RPt a)), stsegX :: !(STRef s a)}
+instance Realer a => Show (STSeg s a) where show (STSeg a _ _) = "ST " ++ show a
 
 -- | Each line segment provides left and right endpoint events
 data EventTy = L | R deriving (Eq, Ord, Show, Generic, NFData)
 
-data Event s = Event {
-  eventSeg :: STSeg s,
-  eventPt :: Pt,
+data Event s a = Event {
+  eventSeg :: STSeg s a,
+  eventPt :: V2 a,
   eventTy :: EventTy,
-  eventSlope :: Float,
+  eventSlope :: a,
   eventBot :: Bool}
 
-instance Show (Event s) where
+instance Realer a => Show (Event s a) where
   show (Event s _ t _ _) = show t ++ " " ++ show s
 
 eventOrder e = (eventPt e, eventSlope e, eventBot e)
-instance Eq (Event s) where a == b = eventOrder a == eventOrder b
-instance Ord (Event s) where compare a b = eventOrder a `compare` eventOrder b
+instance Eq a => Eq (Event s a) where a == b = eventOrder a == eventOrder b
+instance Ord a => Ord (Event s a) where compare a b = eventOrder a `compare` eventOrder b
   
 event s@(STSeg (Seg start _ bot slope) _ _) L = Event s start L slope bot
 event s@(STSeg (Seg _ end bot slope) _ _) R = Event s end R (-slope) bot
 
-data SegGroup s = SegGroup Pt EventTy [(STSeg s, YMap s)]
+data SegGroup s a = SegGroup (V2 a) EventTy [(STSeg s a, YMap s a)]
 
-handleGroupEvent :: YMap s -> Maybe (SegGroup s) -> Event s -> ST s (SegGroup s, [Region])
+handleGroupEvent :: Realer a => YMap s a -> Maybe (SegGroup s a) -> Event s a -> ST s (SegGroup s a, [Region a])
 handleGroupEvent yMap Nothing (Event seg p2 ty2 _ _) = return (SegGroup p2 ty2 [(seg, yMap)], [])
 handleGroupEvent yMap (Just g@(SegGroup p1 ty1 elems)) (Event seg p2 ty2 _ _)
   | p1 /= p2 = (SegGroup p2 ty2 [(seg, yMap)],) <$> makeRegions g
@@ -81,7 +82,7 @@ handleGroupEvent yMap (Just g@(SegGroup p1 ty1 elems)) (Event seg p2 ty2 _ _)
 
 traceReg p n a = trace (show p ++ " (" ++ show n ++ "): " ++ unlines (map show a)) a
 
-makeRegions :: SegGroup s -> ST s [Region]
+makeRegions :: Realer a => SegGroup s a -> ST s [Region a]
 makeRegions (SegGroup pt ty l) = fmap (traceReg (pt, ty) (length l) . concat . concat) $ mapM makeRegion l where
   perhaps = MaybeT . return
   makeRegion (seg, yMap) = fmap maybeToList $ runMaybeT do
@@ -124,7 +125,7 @@ makeRegions (SegGroup pt ty l) = fmap (traceReg (pt, ty) (length l) . concat . c
     assert (y1 <= y2 && y2 <= y3 && y3 <= y4) $ return $ topTri ++ rect ++ botTri
 
 -- Find the segment opposite the segment associated with this RPt
-oppositeSeg :: RPt -> YMap s -> Maybe (STSeg s)
+oppositeSeg :: Realer a => RPt a -> YMap s a -> Maybe (STSeg s a)
 oppositeSeg rp@(rptPolyOnBot->True) m = do
   (rp', s) <- M.lookupGT rp m
   guard $ not (rptPolyOnBot rp')
@@ -134,7 +135,7 @@ oppositeSeg rp m = do
   guard $ rptPolyOnBot rp'
   return s
 
-yrange :: Range -> Seg -> Maybe Range
+yrange :: Realer a => Range a -> Seg a -> Maybe (Range a)
 yrange xrange s = do
   a <- valAt (fst xrange) s
   b <- valAt (snd xrange) s
@@ -144,16 +145,16 @@ swapRpt rp (a,b)
   | rptPolyOnBot rp = (b,a)
   | otherwise = (a,b)
 
-data SweepState s = SweepState {
-  sweepMap :: YMap s,
-  sweepRegions :: [Region],
-  sweepGroup :: Maybe (SegGroup s)}
+data SweepState s a = SweepState {
+  sweepMap :: YMap s a,
+  sweepRegions :: [Region a],
+  sweepGroup :: Maybe (SegGroup s a)}
 
 -- Get the starting y-axis key for a segment
-segRPt :: Seg -> RPt
+segRPt :: Seg a -> RPt a
 segRPt (Seg p1 _ bot slope) = RPt (p1 ^._y) slope bot
 
-getRegions :: [Seg] -> [Region]
+getRegions :: Realer a => [Seg a] -> [Region a]
 getRegions l = runST do
   events <- fmap (sort . concat) $ forM l $ \s-> do
     r <- newSTRef $ segRPt s
@@ -163,14 +164,14 @@ getRegions l = runST do
   !lastRegions <- fmap concat . sequence $ fmap makeRegions (maybeToList $ sweepGroup state)
   return $ lastRegions ++ sweepRegions state
   
-handleEvent :: SweepState s -> Event s -> ST s (SweepState s)
+handleEvent :: Realer a => SweepState s a -> Event s a -> ST s (SweepState s a)
 handleEvent (SweepState yMap regions group) e = do
   !yMap' <- handleYMapEvent yMap e
   (newGroup, !newRegions) <- handleGroupEvent yMap' group e
   return $ SweepState yMap' (newRegions ++ regions) (Just newGroup)
 
 -- Adjust vertical order of line segments on encounering an endpoint
-handleYMapEvent :: YMap s -> Event s -> ST s (YMap s)
+handleYMapEvent :: Realer a=> YMap s a -> Event s a -> ST s (YMap s a)
 handleYMapEvent yMap (Event s@(STSeg a r _) _ L _ _) = do
   rp <- readSTRef r
   yMap' <- checkNeighbors (segStart a ^._x) rp yMap
@@ -180,17 +181,16 @@ handleYMapEvent yMap (Event (STSeg a r _) _ R _ _) = flip deleteParanoid yMap <$
 mconcatS :: (Monad m, Semigroup a) => S.Stream m a -> m a
 mconcatS = S.foldl1' (<>)
 
-regionSample :: MonadRandom m => NonEmpty Seg -> Float -> NonEmpty Region -> m Float
+regionSample :: (Realer a, MonadRandom m) => NonEmpty (Seg a) -> a -> NonEmpty (Region a) -> m a
 regionSample segs n = fmap getSum . mconcatS . S.mapM f . S.fromList . N.toList where
   f r = Sum <$> regionAvgDist segs n r
 
-closestEdge :: NonEmpty Seg -> Pt -> Arg Float Seg
+closestEdge :: Realer a => NonEmpty (Seg a) -> V2 a -> Arg a (Seg a)
 closestEdge segs pt = getMin (sconcat (fmap f segs)) where
-  f :: Seg -> Min (Arg Float Seg)
   f = argMin (edgeDistance pt)
 
 -- | Find the distance from a segment to a point
-edgeDistance :: Pt -> Seg -> Float
+edgeDistance :: Realer a => V2 a -> Seg a -> a
 edgeDistance pt (Seg v1 v2 _ _)
     | dir_len == 0 = norm (v1 - pt)
     | otherwise = norm (basept - closest)
@@ -207,14 +207,14 @@ edgeDistance pt (Seg v1 v2 _ _)
       | otherwise = proj
 
 -- Get the average distance to a segment, given a normalizing constant for probability.
-regionAvgDist :: MonadRandom m => NonEmpty Seg -> Float -> Region -> m Float
+regionAvgDist :: (MonadRandom m, Realer a) => NonEmpty (Seg a) -> a -> Region a -> m a
 regionAvgDist segs n r = fmap (((p *) . getAvg)) $ mconcatS l where
   l = S.replicateM (ceiling (p * n)) m
   m = (avg . getVal . closestEdge segs) <$> sampleRegion r
   p = regionProb r
 
 -- Sample a point uniformly from the space defined by Region
-sampleRegion :: MonadRandom m => Region -> m Pt
+sampleRegion :: (MonadRandom m, Realer a) => Region a -> m (V2 a)
 sampleRegion (Region {..}) = do
   x <- getRandomR (orderedPair regionXRange)
   y <- getRandomR (orderedPair regionYRange)
@@ -234,17 +234,17 @@ sampleRegion (Region {..}) = do
 orderedPair (a,b) = if a > b then (b,a) else (a,b)
 
 -- Flip a number about the midpoint of the given range
-flipCoord :: Float -> Range -> Float
+flipCoord :: Realer a => a -> Range a -> a
 flipCoord coord range = mid - (coord - mid) where mid = (fst range + snd range) / 2
 
 -- | Convert a list of points traversed counter clockwise around a polygon to segments
-polyInterior :: [(Float,Float)] -> [Seg]
+polyInterior :: Realer a => [(a,a)] -> [Seg a]
 polyInterior l = toSegs' (uncurry V2 $ head l) (map (uncurry V2) l) where
   toSegs' a [b] = [seg b a]
   toSegs' a (x:y:l) = seg x y : toSegs' a (y:l)
   toSegs' _ _ = error "Invalid polygon"
 
-polyExterior :: [(Float,Float)] -> [Seg]
+polyExterior :: Realer a => [(a,a)] -> [Seg a]
 polyExterior = polyInterior . reverse
 
 -- | Segments keep endpoints in order. 
@@ -261,20 +261,20 @@ checkNan a
 slope v = (v ^._y) / (v ^._x)
 
 -- | Get the y for a particular x coordinate on a line, if it has one
-valAt :: Float -> Seg -> Maybe RPt
+valAt :: Realer a=> a -> Seg a -> Maybe (RPt a)
 valAt x (Seg a b bot slope)
     | x < (a ^._x) || x > (b ^._x) = Nothing
     | isInfinite slope = if x == (a ^. _x) then Just (RPt (a ^._y) slope bot) else Nothing
     | otherwise = Just $ RPt ((a ^._y) + (x - (a ^._x)) * slope) slope bot
 
 -- | Update the RPt associated with an STSeg at `v`
-writeNewRPt :: STSeg s -> RPt -> RPt -> YMap s -> ST s (Map RPt (STSeg s))
+writeNewRPt :: Realer a=> STSeg s a -> RPt a -> RPt a -> YMap s a -> ST s (Map (RPt a) (STSeg s a))
 writeNewRPt s@(STSeg seg ref _) k rp' yMap = do
   writeSTRef ref rp'
   return $ M.insert rp' s $ M.delete k yMap
 
 -- | Check if a segment that started below us is now above
-checkBelowST :: Float -> RPt -> YMap s -> ST s (YMap s)
+checkBelowST :: Realer a => a -> RPt a -> YMap s a -> ST s (YMap s a)
 checkBelowST x rp yMap = fromMaybe (return yMap) do
   (k,s) <- M.lookupLT rp yMap
   v <- valAt x (stsegVal s)
@@ -282,7 +282,7 @@ checkBelowST x rp yMap = fromMaybe (return yMap) do
   Just $ writeNewRPt s k v yMap >>= checkBelowST x rp
 
 -- | Check if a segment that started above us is now below
-checkAboveST :: Float -> RPt -> YMap s -> ST s (YMap s)
+checkAboveST :: Realer a => a -> RPt a -> YMap s a -> ST s (YMap s a)
 checkAboveST x rp yMap = fromMaybe (return yMap) do
   (k,s) <- M.lookupGT rp yMap
   v <- valAt x (stsegVal s)
@@ -290,9 +290,9 @@ checkAboveST x rp yMap = fromMaybe (return yMap) do
   Just $ writeNewRPt s k v yMap >>= checkAboveST x rp
 
 -- | Check if neighbors need to be fast forwarded in time
-checkNeighbors :: Float -> RPt -> YMap s -> ST s (YMap s)
+checkNeighbors :: Realer a=> a -> RPt a -> YMap s a -> ST s (YMap s a)
 checkNeighbors x rp ym = checkAboveST x rp ym >>= checkBelowST x rp
 
 -- | Like M.delete, but throws an error if the key does not exist
--- deleteParanoid :: Ord k => k -> Map k v -> Map k v
+deleteParanoid :: Ord k => k -> Map k v -> Map k v
 deleteParanoid k m = assert (isJust (M.lookup k m)) $ M.delete k m

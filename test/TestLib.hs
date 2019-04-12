@@ -49,10 +49,10 @@ toPt (Seg p1 p2 b _) = P $ fmap float2Double $ if b then p2 else p1
 toTrail :: [D.P2 Double] -> D.Located (D.Trail V2 Double)
 toTrail = D.mapLoc D.closeTrail .  D.fromVertices
 
-drawSegs :: UUID -> [[Seg]] -> IO ()
+drawSegs :: UUID -> [[Seg Float]] -> IO ()
 drawSegs uuid s = drawDiag uuid (segDiag s)
 
-segDiag :: [[Seg]] -> D.Diagram B
+segDiag :: [[Seg Float]] -> D.Diagram B
 segDiag s = (lbls <> diag) where
   diag = foldMap D.strokeLocTrail (map toTrail pts) & D.lw D.veryThin
   lbls = foldMap toLbl (nub $ concat pts)
@@ -64,14 +64,14 @@ drawDiag uuid diag = do
   renderRasterific ("errplots/" ++ UUID.toString uuid ++ ".png") (D.mkWidth 3000) $
     D.pad 1.1 $ D.centerXY diag
 
-drawPtSegs :: UUID -> [[Seg]] -> V2 Float -> IO ()
+drawPtSegs :: UUID -> [[Seg Float]] -> V2 Float -> IO ()
 drawPtSegs uuid s p = drawDiag uuid $
   (D.circle 0.1 & D.translate (fmap float2Double p) & D.fc D.red & D.lw D.none) <> segDiag s
 
 toLbl :: D.P2 Double -> D.Diagram B
 toLbl (P p) = showPt p & texterific & D.scale 0.1 & D.translate p
 
-drawRegionData :: MonadRandom m => Region -> m (D.Diagram B)
+drawRegionData :: MonadRandom m => Region Float -> m (D.Diagram B)
 drawRegionData r
   = do
     color <- randomCIELab
@@ -92,9 +92,9 @@ drawRegionData r
 foldMapM :: (Monad m, Monoid b) => (a -> m b) -> S.Stream m a -> m b
 foldMapM f = mconcatS . S.mapM f
 
-type PolyData = ([[Seg]], N.NonEmpty Seg, N.NonEmpty Region)
+type PolyData = ([[Seg Float]], N.NonEmpty (Seg Float), N.NonEmpty (Region Float))
 
-toPolyData :: [[Seg]] -> PolyData
+toPolyData :: [[Seg Float]] -> PolyData
 toPolyData seglist = (seglist, N.fromList segs, N.fromList $ getRegions segs) where segs = concat seglist
 
 drawRegions :: MonadRandom m => PolyData -> m (D.Diagram B)
@@ -105,7 +105,7 @@ drawRegions (segs, _, regions) = do
 wrapAD :: Float -> AbsolutelyApproximateValue (Digits Three) Float
 wrapAD = AbsolutelyApproximateValue
 
-traceReg :: [Region] -> [Region]
+traceReg :: [Region Float] -> [Region Float]
 traceReg l = trace (unlines (map show l)) l
 
 prop_sampler =

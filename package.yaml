@@ -33,6 +33,7 @@ dependencies:
 
 default-extensions:
   - ViewPatterns
+  - FlexibleInstances
   - TupleSections
   - DeriveGeneric
   - BlockArguments
