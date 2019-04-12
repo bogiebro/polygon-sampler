@@ -1,6 +1,6 @@
 {-# LANGUAGE DeriveGeneric, DeriveAnyClass, ConstraintKinds #-}
 module Lib (polyInterior, polyExterior, getRegions, regionSample,
-  RegionTy(..), Region(..), Seg(..), showPt, mconcatS
+  RegionTy(..), Region(..), Seg(..), showPt, mconcatS, sampler
 ) where
 import GHC.Generics (Generic)
 import Control.DeepSeq
@@ -25,7 +25,7 @@ import Control.Exception
 import Control.Monad.Trans.Maybe
 import Debug.Trace
 
-type Realer a = (Show a, RealFrac a, Floating a, Random a, RealFloat a)
+type Realer a = (Show a, RealFrac a, Floating a, RealFloat a)
 
 type Range a = (a, a)
 type YMap s a = Map (RPt a) (STSeg s a)
@@ -181,9 +181,15 @@ handleYMapEvent yMap (Event (STSeg a r _) _ R _ _) = flip deleteParanoid yMap <$
 mconcatS :: (Monad m, Semigroup a) => S.Stream m a -> m a
 mconcatS = S.foldl1' (<>)
 
-regionSample :: (Realer a, MonadRandom m) => NonEmpty (Seg a) -> a -> NonEmpty (Region a) -> m a
-regionSample segs n = fmap getSum . mconcatS . S.mapM f . S.fromList . N.toList where
-  f r = Sum <$> regionAvgDist segs n r
+data Sampler a = Sampler (NonEmpty (Seg a)) (NonEmpty (Region a)) a
+
+sampler :: Num a => [Seg a] -> [Region a] -> Sampler a
+sampler segs regions = Sampler (N.fromList segs) (N.fromList regions) (sum $ map regionProb regions)
+
+regionSample :: (Realer a, Random a, MonadRandom m) => a -> Sampler a -> m a
+regionSample k (Sampler segs regions n) = fmap getAvg . mconcatS $ S.mapM f l where
+  l = S.fromList $ N.toList regions
+  f r = regionAvgDist segs k r
 
 closestEdge :: Realer a => NonEmpty (Seg a) -> V2 a -> Arg a (Seg a)
 closestEdge segs pt = getMin (sconcat (fmap f segs)) where
@@ -207,14 +213,14 @@ edgeDistance pt (Seg v1 v2 _ _)
       | otherwise = proj
 
 -- Get the average distance to a segment, given a normalizing constant for probability.
-regionAvgDist :: (MonadRandom m, Realer a) => NonEmpty (Seg a) -> a -> Region a -> m a
-regionAvgDist segs n r = fmap (((p *) . getAvg)) $ mconcatS l where
+regionAvgDist :: (MonadRandom m, Random a, Realer a) => NonEmpty (Seg a) -> a -> Region a -> m (Avg a)
+regionAvgDist segs n r = mconcatS l where
   l = S.replicateM (ceiling (p * n)) m
   m = (avg . getVal . closestEdge segs) <$> sampleRegion r
   p = regionProb r
 
 -- Sample a point uniformly from the space defined by Region
-sampleRegion :: (MonadRandom m, Realer a) => Region a -> m (V2 a)
+sampleRegion :: (MonadRandom m, Random a, Realer a) => Region a -> m (V2 a)
 sampleRegion (Region {..}) = do
   x <- getRandomR (orderedPair regionXRange)
   y <- getRandomR (orderedPair regionYRange)
@@ -238,13 +244,13 @@ flipCoord :: Realer a => a -> Range a -> a
 flipCoord coord range = mid - (coord - mid) where mid = (fst range + snd range) / 2
 
 -- | Convert a list of points traversed counter clockwise around a polygon to segments
-polyInterior :: Realer a => [(a,a)] -> [Seg a]
-polyInterior l = toSegs' (uncurry V2 $ head l) (map (uncurry V2) l) where
+polyInterior :: Realer a => [V2 a] -> [Seg a]
+polyInterior l = toSegs' (head l) l where
   toSegs' a [b] = [seg b a]
   toSegs' a (x:y:l) = seg x y : toSegs' a (y:l)
   toSegs' _ _ = error "Invalid polygon"
 
-polyExterior :: Realer a => [(a,a)] -> [Seg a]
+polyExterior :: Realer a => [V2 a] -> [Seg a]
 polyExterior = polyInterior . reverse
 
 -- | Segments keep endpoints in order. 

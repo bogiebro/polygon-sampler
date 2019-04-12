@@ -28,6 +28,10 @@ import Data.Colour.Palette.RandomColor
 import qualified Data.Vector.Fusion.Stream.Monadic as S
 import Debug.Trace
 import qualified Data.List.NonEmpty as N
+import Numeric.AD
+import Numeric.AD.Internal.Reverse
+import Data.Reflection
+import Data.Functor.Compose
 
 instance MonadRandom Gen where
   getRandomR = choose
@@ -41,8 +45,9 @@ instance Arbitrary a => Arbitrary (V2 a) where
 
 instance Arbitrary UUID where arbitrary = chooseAny
 
-middle = [(0,0), (1, 0), (1, 1), (0, 1)]
-bigger = [(-1,-1), (2, -1), (2,2), (-1, 2)]
+middle :: [V2 Float]
+middle = map (uncurry V2) [(0,0), (1, 0), (1, 1), (0, 1)]
+bigger = map (uncurry V2) [(-1,-1), (2, -1), (2,2), (-1, 2)]
 
 toPt (Seg p1 p2 b _) = P $ fmap float2Double $ if b then p2 else p1
 
@@ -92,14 +97,18 @@ drawRegionData r
 foldMapM :: (Monad m, Monoid b) => (a -> m b) -> S.Stream m a -> m b
 foldMapM f = mconcatS . S.mapM f
 
-type PolyData = ([[Seg Float]], N.NonEmpty (Seg Float), N.NonEmpty (Region Float))
+type PolyData = ([[Seg Float]], [Region Float])
 
-toPolyData :: [[Seg Float]] -> PolyData
-toPolyData seglist = (seglist, N.fromList segs, N.fromList $ getRegions segs) where segs = concat seglist
+toPolyData :: Real a => [[Seg a]] -> PolyData
+toPolyData seglist = (seglist', getRegions segs) where
+  seglist' = map (map coerceSeg) seglist
+  segs = concat seglist'
 
-drawRegions :: MonadRandom m => PolyData -> m (D.Diagram B)
-drawRegions (segs, _, regions) = do
-  overlay <- foldMapM drawRegionData (S.fromList $ N.toList regions)
+coerceSeg (Seg a b bot slope) = Seg (fmap realToFrac a) (fmap realToFrac b) bot (realToFrac slope)
+
+drawRegions :: PolyData -> IO (D.Diagram B)
+drawRegions (segs, regions) = evalRandIO do
+  overlay <- foldMapM drawRegionData (S.fromList $ regions)
   return $ segDiag segs <> overlay
 
 wrapAD :: Float -> AbsolutelyApproximateValue (Digits Three) Float
@@ -108,13 +117,21 @@ wrapAD = AbsolutelyApproximateValue
 traceReg :: [Region Float] -> [Region Float]
 traceReg l = trace (unlines (map show l)) l
 
-prop_sampler =
-  let enclosed = [polyInterior middle, polyExterior bigger]
-      pd = toPolyData enclosed
-  in once $ \uuid-> do
-      diag <- drawRegions pd :: Gen (D.Diagram B)
-      return $ whenFail (drawDiag uuid diag) do
-        let segs = concat enclosed
-        s <- regionSample (N.fromList segs) 500 (N.fromList $ traceReg $ getRegions $ concat enclosed)
-        return (total s) :: Gen Property
+instance Reifies s Tape => Random (Reverse s Float) where
+  random g = let (a, g') = random g
+             in (auto a, g')
+  randomR (x,y) g = let (a, g') = randomR (realToFrac x, realToFrac y) g
+                in (auto a, g')
+
+outdoorScore g exterior (Compose (Compose pts)) = flip evalRand g m where
+  segs = concat $ polyExterior exterior : map polyInterior pts
+  m =regionSample 500 (sampler segs $ traceReg $ getRegions segs)
+
+midF = Compose (Compose [middle])
+
+-- Everything is Nan! Wtf.
+
+-- prop_grad = total $ trace (show $ grad (outdoorScore (mkStdGen 2) bigger) midF) (2::Float)
+
+prop_sampler = total $ trace (show $ (outdoorScore (mkStdGen 2) bigger) midF) (2::Float)
 

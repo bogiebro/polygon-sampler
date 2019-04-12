@@ -30,6 +30,8 @@ dependencies:
 - splitmix
 - vector
 - transformers
+- ad
+- reflection
 
 default-extensions:
   - ViewPatterns
