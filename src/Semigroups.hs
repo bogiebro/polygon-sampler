@@ -23,3 +23,4 @@ argMin f x = Min (Arg (f x) x)
 
 getVal (Arg a _) = a
 getArg (Arg _ a) = a
+

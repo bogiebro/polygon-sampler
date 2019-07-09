@@ -47,6 +47,7 @@ instance Arbitrary UUID where arbitrary = chooseAny
 
 middle :: [V2 Float]
 middle = map (uncurry V2) [(0,0), (1, 0), (1, 1), (0, 1)]
+bigger :: [V2 Float]
 bigger = map (uncurry V2) [(-1,-1), (2, -1), (2,2), (-1, 2)]
 
 toPt (Seg p1 p2 b _) = P $ fmap float2Double $ if b then p2 else p1
@@ -123,15 +124,20 @@ instance Reifies s Tape => Random (Reverse s Float) where
   randomR (x,y) g = let (a, g') = randomR (realToFrac x, realToFrac y) g
                 in (auto a, g')
 
-outdoorScore g exterior (Compose (Compose pts)) = flip evalRand g m where
+-- outdoorScore :: Realer a => StdGen -> [V2 Float] -> (Compose (Compose [] []) V2 a) -> a
+outdoorScore g (Compose exterior) (Compose (Compose pts)) = flip evalRand g m where
   segs = concat $ polyExterior exterior : map polyInterior pts
-  m =regionSample 500 (sampler segs $ traceReg $ getRegions segs)
+  m = regionSample 500 segs (getRegions segs)
 
 midF = Compose (Compose [middle])
+midG = fmap auto midF
+biggerG = fmap auto (Compose bigger)
 
--- Everything is Nan! Wtf.
+-- foo :: Reifies s Tape => Compose (Compose [] []) V2 (Reverse s Float) -> Reverse s Float
+-- foo (Compose (Compose (x:_))) = getVal $ closestEdge (polyInterior x) (V2 (-0.5) (-0.5))
 
--- prop_grad = total $ trace (show $ grad (outdoorScore (mkStdGen 2) bigger) midF) (2::Float)
+-- propgrad = total $ trace (show $ grad foo midG) (2::Int)
 
-prop_sampler = total $ trace (show $ (outdoorScore (mkStdGen 2) bigger) midF) (2::Float)
+prop_sampler = total $ trace (show $ grad (outdoorScore (mkStdGen 2) biggerG) midG) (2::Int)
 
+-- We get NaNs again! Dang. But at least stuff compiles.

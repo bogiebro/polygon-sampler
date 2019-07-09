@@ -1,6 +1,7 @@
 {-# LANGUAGE DeriveGeneric, DeriveAnyClass, ConstraintKinds #-}
 module Lib (polyInterior, polyExterior, getRegions, regionSample,
-  RegionTy(..), Region(..), Seg(..), showPt, mconcatS, sampler
+  RegionTy(..), Region(..), Seg(..), showPt, mconcatS,
+  closestEdge, Realer
 ) where
 import GHC.Generics (Generic)
 import Control.DeepSeq
@@ -11,8 +12,6 @@ import Data.Map.Strict (Map)
 import Data.Maybe
 import Data.Semigroup
 import Data.List
-import Data.List.NonEmpty (NonEmpty)
-import qualified Data.List.NonEmpty as N
 import Control.Monad
 import Control.Monad.Random.Strict hiding (fromList)
 import Text.Printf
@@ -181,18 +180,13 @@ handleYMapEvent yMap (Event (STSeg a r _) _ R _ _) = flip deleteParanoid yMap <$
 mconcatS :: (Monad m, Semigroup a) => S.Stream m a -> m a
 mconcatS = S.foldl1' (<>)
 
-data Sampler a = Sampler (NonEmpty (Seg a)) (NonEmpty (Region a)) a
-
-sampler :: Num a => [Seg a] -> [Region a] -> Sampler a
-sampler segs regions = Sampler (N.fromList segs) (N.fromList regions) (sum $ map regionProb regions)
-
-regionSample :: (Realer a, Random a, MonadRandom m) => a -> Sampler a -> m a
-regionSample k (Sampler segs regions n) = fmap getAvg . mconcatS $ S.mapM f l where
-  l = S.fromList $ N.toList regions
+regionSample :: (Realer a, Random a, MonadRandom m) => a -> [Seg a] -> [Region a] -> m a
+regionSample k segs regions = fmap getAvg . mconcatS $ S.mapM f l where
+  l = S.fromList regions
   f r = regionAvgDist segs k r
 
-closestEdge :: Realer a => NonEmpty (Seg a) -> V2 a -> Arg a (Seg a)
-closestEdge segs pt = getMin (sconcat (fmap f segs)) where
+closestEdge :: Realer a => [Seg a] -> V2 a -> Arg a (Seg a)
+closestEdge segs pt = getMin (foldl1 (<>) (fmap f segs)) where
   f = argMin (edgeDistance pt)
 
 -- | Find the distance from a segment to a point
@@ -213,7 +207,7 @@ edgeDistance pt (Seg v1 v2 _ _)
       | otherwise = proj
 
 -- Get the average distance to a segment, given a normalizing constant for probability.
-regionAvgDist :: (MonadRandom m, Random a, Realer a) => NonEmpty (Seg a) -> a -> Region a -> m (Avg a)
+regionAvgDist :: (MonadRandom m, Random a, Realer a) => [Seg a] -> a -> Region a -> m (Avg a)
 regionAvgDist segs n r = mconcatS l where
   l = S.replicateM (ceiling (p * n)) m
   m = (avg . getVal . closestEdge segs) <$> sampleRegion r
